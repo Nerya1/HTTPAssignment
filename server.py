@@ -4,7 +4,7 @@ from pathlib import Path
 bottle = Bottle("127.0.0.1", 8080)
 
 source_path = Path('src/')
-extension_matching = {
+extension_matcher = {
     'txt': 'text/plain; charset=utf-8',
     'html': 'text/html; charset=utf-8',
     'js': 'text/javascript; charset=utf-8',
@@ -18,7 +18,7 @@ extension_matching = {
 
 @bottle.route("/")
 def index(route):
-    return File('src/index.html'), extension_matching['html']
+    return File('src/index.html'), extension_matcher['html']
 
 
 @bottle.route("/calculate-next")
@@ -33,7 +33,7 @@ def calculate_area(route, width='1', height='1'):
 
 @bottle.route("/*.*")
 def get_file(route):
-    file_path = source_path / Path(route[1:])
+    file_path = source_path / route[1:]
 
     if source_path not in file_path.parents:
         raise RequestError("403 Forbidden", "Requested file is out of source path")
@@ -41,7 +41,7 @@ def get_file(route):
     if not file_path.is_file():
         raise RequestError("404 Not Found", "Requested file not found")
 
-    return File(file_path), extension_matching[route.split('.')[-1]]
+    return File(file_path), extension_matcher[route.split('.')[-1]]
 
 
 @bottle.route('/upload', method='POST')
