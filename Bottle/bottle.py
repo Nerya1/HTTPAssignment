@@ -2,8 +2,22 @@ from functools import wraps
 from socket import create_server
 from select import select
 from re import compile
+from traceback import format_exc
 
 from Bottle import Protocol, RequestError
+
+
+def render_route(func, *args, **kwargs):
+    result = func(
+        *args,
+        **{key: value for key, value in kwargs.items() if key in func.__code__.co_varnames}
+    )
+
+    try:
+        return Protocol.pack(result[0]), result[1]
+
+    except IndexError:
+        return Protocol.pack(result), None
 
 
 class Bottle:
@@ -15,9 +29,15 @@ class Bottle:
         self.socket.listen()
 
         self.clients = {}
-        self.routes = {}
+        self.routes = {
+            'GET': {},
+            'POST': {},
+        }
 
-    def route(self, route: str):
+    def route(self, route: str, method='GET'):
+        if method not in self.routes.keys():
+            raise KeyError(f'Method {method} not supported')
+
         def decorator(func):
             @wraps(func)
             def wrap(*args, **kwargs):
@@ -27,40 +47,33 @@ class Bottle:
                          "Content-Length: {length}\r\n\r\n"
 
                 status = '200 OK'
-                t = 'text/html; charset=utf-8'
 
                 try:
-                    result = func(
-                        *args,
-                        **{key: value for key, value in kwargs.items() if key in func.__code__.co_varnames}
-                    )
-                    
-                    try:
-                        response, t = result
-                    
-                    except (TypeError, ValueError):
-                        response = result
-                    
-                    response = Protocol.pack(response)
+                    response, type_ = render_route(func, *args, **kwargs)
 
                 except RequestError as e:
-                    response = e.response.encode()
+                    response = Protocol.pack(e.response)
+                    type_ = e.type
                     status = e.status_code
 
                 except TypeError:
                     response = b'illegal parameter'
+                    type_ = 'text/plain; charset=utf-8'
                     status = '403 Forbidden'
+
+                if type_ is None:
+                    type_ = 'text/html; charset=utf-8'
 
                 return (
                     header.format(
                         status=status,
-                        type=t,
+                        type=type_,
                         length=len(response)
                     ).encode() +
                     response
                 )
 
-            self.routes.update({compile(route): wrap})
+            self.routes[method].update({compile(route): wrap})
             return wrap
 
         return decorator
@@ -68,10 +81,14 @@ class Bottle:
     def handle_request(self, request):
         request = Protocol.process_request(request)
         match request:
-            case {'Method': 'GET', 'Route': requested_route, 'Variables': kwargs}:
-                for route, func in self.routes.items():
+            case {'Method': method, 'Route': requested_route, 'Variables': kwargs}:
+                for route, func in self.routes[method].items():
                     if route.fullmatch(requested_route):
-                        return func(requested_route, **kwargs)
+                        if method == 'POST':
+                            return func(requested_route, **kwargs, content=request['Content'])
+
+                        else:
+                            return func(requested_route, **kwargs)
 
         return b''
 
@@ -108,4 +125,8 @@ class Bottle:
             except TimeoutError:
                 pass
 
-            self.respond()
+            try:
+                self.respond()
+
+            except Exception as e:
+                print(f'{e}\r\n{format_exc()}\r', end='')
